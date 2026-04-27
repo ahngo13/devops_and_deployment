@@ -1,0 +1,79 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+# All Vagrant configuration is done below. The "2" in Vagrant.configure
+# configures the configuration version (we support older styles for
+# backwards compatibility). Please don't change it unless you know what
+# you're doing.
+Vagrant.configure("2") do |config|
+
+  config.vm.define :gitlab do |machine1|
+    machine1.vm.box = "bento/ubuntu-24.04"
+    machine1.vm.boot_timeout = 3600 # 60분 기다리는 것으로 변경
+    if Vagrant.has_plugin?("vagrant-vbguest")
+      config.vbguest.auto_update = false
+    end
+
+    machine1.vm.network "forwarded_port", guest: 80 , host: 8080
+    machine1.vm.network "forwarded_port", guest: 22 , host: 8022
+    machine1.vm.network "private_network", ip: "192.168.33.44"
+    machine1.vm.synced_folder ".", "/vagrant", type: "rsync", rsync__exclude: [".git/"]  
+    machine1.vm.disk :disk, size: "100GB", primary: true # 가상 디스크 크기
+    machine1.vm.provider "virtualbox" do |vb|
+      vb.name = "gitlab.local"
+      vb.cpus = 2 # 가상 CPU 개수 지정할 수 있음.
+      vb.memory = "4096" # MB 단위 4096 = 4096MB = 4GB
+    end
+    machine1.vm.provision "shell", inline: <<-SHELL
+      sudo apt-get update
+      sudo apt-get install -y curl openssh-server ca-certificates
+      debconf-set-selections <<< "postfix postfix/mailname string $HOSTNAME" #POSTFIX(메일서버) 설정 -호스트이름
+      debconf-set-selections <<< "postfix postfix/main_mailer_type string 'Internet Site'" #POSTFIX(메일서버) 설정
+      DEBIAN_FRONTEND=noninteractive sudo apt-get install -y postfix #POSTFIX메일서버) 설정을 적용하여 설치
+      if [ ! -e /vagrant/gitlab-ce.deb ]; then # https://packages.gitlab.com/app/gitlab/gitlab-ce/search 에서 확인
+        wget --content-disposition -O /vagrant/gitlab-ce.deb \
+          https://packages.gitlab.com/gitlab/gitlab-ce/packages/ubuntu/noble/gitlab-ce_18.7.5-ce.0_amd64.deb/download.deb
+      fi
+      sudo dpkg -i /vagrant/gitlab-ce.deb
+      sudo gitlab-ctl reconfigure
+    SHELL
+  end
+  config.vm.define :runner do |machine2|
+    machine2.vm.box = "bento/ubuntu-24.04"
+    machine2.vm.boot_timeout = 3600 # 60분 기다리는 것으로 변경
+    machine2.vm.hostname = "runner.local"
+    machine2.vm.network "private_network", ip: "192.168.33.45"
+    
+    machine2.vm.provider "virtualbox" do |vb|
+      vb.name = "gitlab.runner"
+      vb.cpus = 2 # 가상 CPU 개수 지정할 수 있음.
+      vb.memory = "4096" # MB 단위 4096 = 4096MB = 4GB
+    end
+
+     machine2.vm.provision "shell", inline: <<-SHELL
+        sudo apt-get update
+        sudo apt-get install -y curl
+        # Download the binary for your system
+        sudo curl -L --output /usr/local/bin/gitlab-runner https://gitlab-runner-downloads.s3.amazonaws.com/latest/binaries/gitlab-runner-linux-amd64
+
+        # Give it permission to execute
+        sudo chmod +x /usr/local/bin/gitlab-runner
+
+        # Create a GitLab Runner user
+        sudo useradd --comment 'GitLab Runner' --create-home gitlab-runner --shell /bin/bash
+
+        # Install and run as a service
+        sudo gitlab-runner install --user=gitlab-runner --working-directory=/home/gitlab-runner
+        sudo gitlab-runner start
+
+        sudo gitlab-runner register --non-interactive \
+        --url "http://192.168.33.44" \
+        --registration-token "F9MLN9pd23ukitVWvNTC" \
+        --executor "shell" \
+        --description "vagrant-runner" \
+        --tag-list "vagrant" \
+        --run-untagged="true" \
+        --locked="false"
+      SHELL
+  end
+end

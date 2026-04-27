@@ -1,0 +1,33 @@
+Vagrant.configure("2") do |config|
+  config.vm.box = "bento/ubuntu-24.04"
+  config.vm.boot_timeout = 3600 # 60분 기다리는 것으로 변경
+  if Vagrant.has_plugin?("vagrant-vbguest")
+    config.vbguest.auto_update = false
+  end
+
+  config.vm.network "forwarded_port", guest: 80 , host: 8080
+  config.vm.network "forwarded_port", guest: 22 , host: 8022
+  config.vm.network "private_network", ip: "192.168.33.44"
+  config.vm.synced_folder ".", "/vagrant", type: "rsync", rsync__exclude: [".git/"]  
+  config.vm.disk :disk, size: "100GB", primary: true # 가상 디스크 크기
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = "gitlab.local"
+    vb.cpus = 2 # 가상 CPU 개수 지정할 수 있음.
+    vb.memory = "4096" # MB 단위 4096 = 4096MB = 4GB
+
+  config.vm.provision "shell", inline: <<-SHELL
+    sudo apt-get update
+    sudo apt-get install -y curl openssh-server ca-certificates
+    debconf-set-selections <<< "postfix postfix/mailname string $HOSTNAME" #POSTFIX(메일서버) 설정 -호스트이름
+    debconf-set-selections <<< "postfix postfix/main_mailer_type string 'Internet Site'" #POSTFIX(메일서버) 설정
+    DEBIAN_FRONTEND=noninteractive sudo apt-get install -y postfix #POSTFIX메일서버) 설정을 적용하여 설치
+    if [ ! -e /vagrant/gitlab-ce.deb ]; then # https://packages.gitlab.com/app/gitlab/gitlab-ce/search 에서 확인
+      wget --content-disposition -O /vagrant/gitlab-ce.deb \
+        https://packages.gitlab.com/gitlab/gitlab-ce/packages/ubuntu/noble/gitlab-ce_18.7.5-ce.0_amd64.deb/download.deb
+    fi
+    sudo dpkg -i /vagrant/gitlab-ce.deb
+    sudo gitlab-ctl reconfigure
+  SHELL
+end
+
+end
